@@ -1,0 +1,4 @@
+/* SECTION - CONFIGURATION - CUSTOM CSS */
+/* hide all original */
+body * { display: none }
+div#app { display: block }
