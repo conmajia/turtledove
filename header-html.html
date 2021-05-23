@@ -1,6 +1,7 @@
 <!-- displays a thin page loading progressbar -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pace-progressbar@1.0.9/themes/blue/pace-theme-minimal.css">
 
+<script src="https://cdn.jsdelivr.net/npm/js-url@2.3.0/url.min.js">
 // url extractor js-url 2.3.0
 // url('attr', url_string) = value
 // DOMO
@@ -8,8 +9,10 @@
 // ATTRIBUTES
 //    protocol|.-1(top domain)|.1(1st sub domain)|hostname(full domain)|domain(abc.com)|
 //    1(folder 1)|2(folder 2)|file(abc.html)|filename(abc)|fileext(html)|?(query object)|?p(query p)
-<script src="https://cdn.jsdelivr.net/npm/js-url@2.3.0/url.min.js"></script>
+</script>
+
 <script src="https://unpkg.com/vue@next"></script>
+
 <script data-name="Tutledove" data-version="0.03">
 /*
 Project Turtledove
@@ -17,6 +20,12 @@ By Greg Conmajia @conmajia
 initiated: May 9, 2021
 modified: May 17, 2021
 */
+
+// HTML entity decoding
+function decodeHTML(data) {
+    return $('<span>').html(data).text()
+}
+
 // string code execution
 function exec(obj) {
     // NOTE: `eval` is officially announced unsafe and inefficient, yet it
@@ -58,7 +67,7 @@ async function remote(path, opt) {
         const t = document.createElement('TEMPLATE')
         t.innerHTML = ctnt;
         let r = t.content.querySelector(def_opt['selector'])
-        if (r) return r.innerText
+        if (r) return r.innerHTML
         else {
             console.warn('[REMOTE]Error querying `' + def_opt['selector'] + '` in ' + url)
             return undefined
@@ -71,13 +80,8 @@ async function remote(path, opt) {
 
 // load resources as a DOM element, May 17, 2021 @conmajia
 // for `.js` and `.css`, or `-js.html` and `-css.html` only
-// TODO
-//    May 17, '21
-//    Rewrite required. Consider scenarios:
-//    1. `.js`/`.css` file paths
-//    2. list of files
-//    3. JavaScript/CSS content
-//    4. HTML content with JavaScript/CSS
+// MODIFICATION
+//     May 24 '21
 // PARAMETERS
 //     preprocessor: additional processor on content 
 //     postprocessor: additional processor on content
@@ -86,57 +90,72 @@ async function remote(path, opt) {
 //    Utilize an extension list with patterns to support multiple types. Besides, shall
 //    processors for files be stored in such a table.
 async function resource(url, preprocessor, postprocessor, onload) {
-    // extract file extensions, for an `aa.js.html` or `aa-js.html` url,
-    // 2 extensions means internal content, while 3 means external.
+    // extract file extensions, for an `aa.js.html` or `aa-js.html` urls,
     // be aware of `xx.min.js`
-    let m = url.match(/([\-\.]([\d\w]+)){0,1}\.([\d\w]+)+$/i)
-    if (!m) return { "ok" : false }
-    let external = m[3] == 'html' ? false : true
-    let extension = m[2] && m[2] != 'min' ? m[2] : m[3]
-    // processor list, v0.1, May 18, '21
+    const extlst = ['js', 'jsx', 'css', 'scss']
+    const ptn = url.match(/([\-\.]([\d\w]{2,3})){0,1}\.([\d\w]+)+$/i)
+    const extnl = extlst.includes(ptn[3])
+    let major = ptn[3]
+    let minor = ptn[2] && extlst.includes(ptn[2]) ? ptn[2] : undefined
+    // processor list, v0.2 @conmajia
     // TODO
     //    1. Add VBScript support. May 18, '21
-    const p = [{
-        "extension" : "js",
-        "processor" : (path, data, external) => {
+    const proc = [{
+        'type': ['js', 'jsx'],
+        'action': data => {
             // external script files are appended as `<SCRIPT>` tags
-            // Code strings in `data` are executed later in a `Promise` proxy
-            if (external) {
+            if (extnl) {
                 let t = document.createElement('SCRIPT')
-                external && t.setAttribute('src', path)
+                external && t.setAttribute('src', url)
                 onload && typeof onload == 'function' && t.addEventListener('load', onload)
                 document.body.appendChild(t)
             } else {
-                return exec(data)
+                // Extract script tags in HTML, or immediately evaluate JS scripts
+                if (data.match(/\<script.*?\>.*?<\/script>/i)) {
+                    let t = document.createElement('TEMPLATE')
+                    t.innerHTML = data
+                    t.content.querySelectorAll('script').forEach(item => {
+                        document.body.appendChild(item)
+                    })
+                } else {
+                    return exec(decodeHTML(data))
+                }
             }
         }
     }, {
-        "extension" : ["css", "scss"],
-        "processor" : (path, data, external) => {
-            let t = document.createElement(external ? 'LINK' : 'STYLE')
+        'type': ['css', 'scss', 'sass'],
+        'action': data => {
+            let t = document.createElement(extnl ? 'LINK' : 'STYLE')
             t.setAttribute('type', 'text/css')
-            external && t.setAttribute('rel', 'stylesheet')
+            extnl && t.setAttribute('rel', 'stylesheet')
+            extnl && t.setAttribute('href', url)
             if (data) t.innerHTML = data
             document.head.appendChild(t)
-            return { "ok" : true }
         }
+    }, {
+        'type': ['html'],
+        'action': data => {}
     }]
     // process
-    let ret = {}
-    const data = await remote(url, { selector : blog_container })
-    p.forEach(item => {
-        if (item['extension'].includes(extension)) {
-            let r = item['processor'](url, data, external)
-            ret = Object.assign(ret, r)
+    const data = await remote(url, {
+        selector: blog_container
+    })
+    let ret = {
+        'ok': false
+    }
+    proc.forEach(item => {
+        if (item.type.includes(major) || item.type.includes(minor)) {console.log({url,major,minor,'typ':item.type})
+            try {
+                let r = item.action(data)
+                ret.result = r
+                ret.ok = true
+                return;
+            } catch (e) {
+                ret.result = e
+            }
         }
     })
-    if (ret['ok'] && postprocessor && typeof postprocessor == 'function') {
-        return {
-            "result" : postprocessor(ret['result']),
-            "ok" : true
-        }
-    }
-    else return { "ok" : false }
+    return ret
 }
 
 // loads list of resource, May 18, '21 @conmajia
@@ -151,7 +170,8 @@ async function loadResources(file) {
     }
 }
 
-// load styles and scripts
+// load styles and scripts from internal articles
+// `cnblogs.com/xxx/article/styles.html`
 loadResources('styles.html')
 loadResources('scripts.html')
 
@@ -212,7 +232,8 @@ var site = {
 
 // append fundation `<div id="app"></div>`
 let app_structure = document.createElement('DIV')
-app_structure.setAttribute('id', 'app');app_structure.innerText = 'Loading...'
+app_structure.setAttribute('id', 'app')
+app_structure.innerText = 'loading...'
 // insert this node right after the `top` anchor
 document.querySelector('a[name=top]').after(app_structure)
 // initialize builder
